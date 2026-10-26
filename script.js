@@ -9,6 +9,11 @@ const priorityInput = document.querySelector("#todo-priority");
 const descriptionInput = document.querySelector("#todo-description");
 const startDateInput = document.querySelector("#todo-start-date");
 const dueDateInput = document.querySelector("#todo-due-date");
+const deleteDialog = document.querySelector("#delete-dialog");
+const deleteTodoTitle = document.querySelector("#delete-todo-title");
+const cancelDeleteButton = document.querySelector("#cancel-delete");
+const confirmDeleteButton = document.querySelector("#confirm-delete");
+const confettiLayer = document.querySelector("#confetti-layer");
 const titleCount = document.querySelector("#title-count");
 const descriptionCount = document.querySelector("#description-count");
 const formHeading = document.querySelector("#form-heading");
@@ -32,6 +37,8 @@ let selectedFilter = "all";
 let editingId = null;
 let storageFailure = null;
 let initialLoadFailed = false;
+let pendingDeleteId = null;
+let deleteTrigger = null;
 
 function isTodoItem(value) {
   return Boolean(
@@ -202,6 +209,8 @@ function createTodoCard(todo) {
   checkbox.disabled = Boolean(storageFailure);
   checkbox.setAttribute("aria-label", `${todo.title} 완료 여부`);
   checkbox.addEventListener("change", () => {
+    const shouldCelebrate = checkbox.checked;
+    const checkboxBounds = shouldCelebrate ? checkbox.getBoundingClientRect() : null;
     const nextTodos = todos.map((item) =>
       item.id === todo.id
         ? { ...item, completed: checkbox.checked, updatedAt: new Date().toISOString() }
@@ -211,6 +220,12 @@ function createTodoCard(todo) {
       todos = nextTodos;
       hideMessage();
       render();
+      if (shouldCelebrate && checkboxBounds) {
+        celebrateCompletion(
+          checkboxBounds.left + checkboxBounds.width / 2,
+          checkboxBounds.top + checkboxBounds.height / 2
+        );
+      }
     }
   });
 
@@ -249,21 +264,70 @@ function createTodoCard(todo) {
   deleteButton.type = "button";
   deleteButton.disabled = Boolean(storageFailure);
   deleteButton.setAttribute("aria-label", `${todo.title} 삭제`);
-  deleteButton.addEventListener("click", () => {
-    if (!window.confirm("정말 이 할 일을 삭제하시겠습니까?")) return;
-    const nextTodos = todos.filter((item) => item.id !== todo.id);
-    if (persistTodos(nextTodos)) {
-      todos = nextTodos;
-      if (editingId === todo.id) resetForm();
-      showMessage("할 일을 삭제했습니다.");
-      render();
-    }
-  });
+  deleteButton.addEventListener("click", () => openDeleteDialog(todo, deleteButton));
 
   actions.append(editButton, deleteButton);
   cardBody.append(row, actions);
   card.append(cardBody);
   return card;
+}
+
+function openDeleteDialog(todo, trigger) {
+  pendingDeleteId = todo.id;
+  deleteTrigger = trigger;
+  deleteTodoTitle.textContent = `“${todo.title}”`;
+  deleteDialog.showModal();
+  cancelDeleteButton.focus();
+}
+
+function closeDeleteDialog() {
+  if (deleteDialog.open) deleteDialog.close();
+  pendingDeleteId = null;
+}
+
+function deletePendingTodo() {
+  const todoToDelete = todos.find((todo) => todo.id === pendingDeleteId);
+  if (!todoToDelete) {
+    closeDeleteDialog();
+    return;
+  }
+
+  const nextTodos = todos.filter((todo) => todo.id !== todoToDelete.id);
+  if (!persistTodos(nextTodos)) return;
+
+  todos = nextTodos;
+  closeDeleteDialog();
+  if (editingId === todoToDelete.id) resetForm();
+  showMessage("할 일을 삭제했습니다.");
+  render();
+}
+
+function celebrateCompletion(x, y) {
+  if (
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  ) {
+    return;
+  }
+
+  const colors = ["gold", "rose", "indigo", "mint", "sky"];
+  const particleCount = 24;
+
+  for (let index = 0; index < particleCount; index += 1) {
+    const angle = (Math.PI * 2 * index) / particleCount + Math.random() * 0.18;
+    const distance = 28 + Math.random() * 58;
+    const particle = createElement(
+      "span",
+      `confetti-piece confetti-${colors[index % colors.length]}`
+    );
+    particle.style.setProperty("--x", `${Math.cos(angle) * distance}px`);
+    particle.style.setProperty("--y", `${Math.sin(angle) * distance - 22}px`);
+    particle.style.setProperty("--spin", `${Math.random() * 720 - 360}deg`);
+    particle.style.left = `${x}px`;
+    particle.style.top = `${y}px`;
+    confettiLayer.append(particle);
+    particle.addEventListener("animationend", () => particle.remove(), { once: true });
+  }
 }
 
 function renderCounts() {
@@ -443,6 +507,16 @@ filterTabs.addEventListener("click", (event) => {
 });
 
 sortOrder.addEventListener("change", render);
+cancelDeleteButton.addEventListener("click", closeDeleteDialog);
+confirmDeleteButton.addEventListener("click", deletePendingTodo);
+deleteDialog.addEventListener("close", () => {
+  pendingDeleteId = null;
+  if (deleteTrigger?.isConnected) deleteTrigger.focus();
+  deleteTrigger = null;
+});
+deleteDialog.addEventListener("click", (event) => {
+  if (event.target === deleteDialog) closeDeleteDialog();
+});
 
 const loadResult = loadTodos();
 if (loadResult.ok) {
